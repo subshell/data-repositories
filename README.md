@@ -1,5 +1,7 @@
 # @subshell/data-repositories
 
+[![CircleCI](https://circleci.com/gh/subshell/data-repositories.svg?style=svg)](https://circleci.com/gh/subshell/data-repositories)
+
 This is a wrapper around [Dexie](https://github.com/dfahlander/Dexie.js), which itself is already a wrapper around IndexedDB. This wrapper allows to create
 repositories, similar as you might be used to from Java and Spring Data.
 
