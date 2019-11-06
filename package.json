@@ -1,0 +1,28 @@
+{
+  "name": "@subshell/data-repositories",
+  "version": "1.0.3-0",
+  "description": "This library allows you to use convenient repositories backed by Dexie and IndexedDB.",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc --build src/tsconfig.lib.json",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "package": "npm run test && npm run build"
+  },
+  "keywords": [],
+  "author": "Team Weasel / subshell GmbH",
+  "license": "MIT",
+  "dependencies": {
+    "rxjs": "^6.4.0",
+    "dexie": "2.0.4",
+    "dexie-observable": "1.0.0-beta.5",
+    "reflect-metadata": "0.1.13"
+  },
+  "devDependencies": {
+    "@types/jest": "^24.0.22",
+    "fake-indexeddb": "2.1.1",
+    "jest": "24.9.0",
+    "ts-jest": "^24.1.0",
+    "typescript": "3.7.2"
+  }
+}

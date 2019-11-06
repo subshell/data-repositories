@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "es5",
+    "module": "es6",
+    "lib": [
+      "DOM",
+      "ES2016",
+      "ES2017"
+    ],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "removeComments": true,
+    "noImplicitAny": false,
+    "noImplicitReturns": false,
+    "strictNullChecks": false,
+    "strict": true,
+    "moduleResolution": "node",
+    "types": [],
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "exclude":  [
+    "./lib",
+    "./node_modules"
+  ]
+}

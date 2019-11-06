@@ -1,0 +1,8 @@
+src
+out-tsc
+tsconfig.json
+jest.config.js
+test
+.idea
+.circleci
+DEVELOPER.md
