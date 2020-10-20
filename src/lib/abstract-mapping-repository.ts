@@ -1,4 +1,4 @@
-import Dexie from "dexie";
+import Dexie, {IndexableType, Table} from "dexie";
 import 'dexie-observable';
 import {defer, from, Observable, of, Subject} from "rxjs";
 import {fromPromise} from "rxjs/internal-compatibility";
@@ -6,15 +6,16 @@ import {combineAll, concatAll, defaultIfEmpty, flatMap, map, toArray} from "rxjs
 import {Class} from "./class";
 import {DatabaseAccess} from "./database-access";
 import {
-  DATABASE_COMPOUNDID_METADATA_KEY,
-  DATABASE_DECORATOR_OPTIONS,
-  DATABASE_ID_METADATA_KEY,
-  DATABASE_INCREMENTALID_METADATA_KEY,
-  DATABASE_INDEXED_METADATA_KEY,
-  DATABASE_UNIQUE_METADATA_KEY,
-  DatabaseDecoratorOptions
+    DATABASE_COMPOUNDID_METADATA_KEY,
+    DATABASE_DECORATOR_OPTIONS,
+    DATABASE_ID_METADATA_KEY,
+    DATABASE_INCREMENTALID_METADATA_KEY,
+    DATABASE_INDEXED_METADATA_KEY,
+    DATABASE_UNIQUE_METADATA_KEY,
+    DatabaseDecoratorOptions
 } from "./database-decorators";
 import {Repository} from "./repository";
+import Collection = Dexie.Collection;
 
 export interface RepositoryMapper<VALUE, MODEL> {
   toDatabaseModel(value: VALUE): MODEL | Observable<MODEL>;
@@ -49,14 +50,14 @@ interface MetaField extends MetaFieldOptions {
   field: string | symbol
 }
 
-export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Repository<VALUE, KEY> {
+export abstract class AbstractMappingRepository<VALUE, MODEL, KEY extends IndexableType> implements Repository<VALUE, KEY> {
 
   public readonly repositoryName: string;
 
   public idPropertyName: string;
 
   private eventsSubject = new Subject<RepositoryEvent<VALUE, KEY>>();
-  private repositoryInstantiationTimestamp = new Date().getTime(); // used as a unique id across tabs
+  private repositoryInstantiationTimestamp = String(new Date().getTime()); // used as a unique id across tabs
 
   constructor(private databaseAccess: DatabaseAccess,
               private modelType: Class<MODEL>,
@@ -68,7 +69,7 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
     this.registerEventsListener();
   }
 
-  private get table(): Dexie.Table<MODEL, KEY> {
+  private get table(): Table<MODEL, KEY> {
     return this.databaseAccess.db.table(this.repositoryName);
   }
 
@@ -177,7 +178,7 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
   private registerEventsListener() {
     this.databaseAccess.db.on("changes",changes => {
       changes.forEach(change => {
-        if (change.table !== this.repositoryName || ((<any>change).source && (<any>change).source) === this.repositoryInstantiationTimestamp) {
+        if (change.table !== this.repositoryName || change.source && change.source === this.repositoryInstantiationTimestamp) {
           return;
         }
         let repositoryEvent: RepositoryEvent<VALUE, KEY> = {
@@ -208,10 +209,10 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
   }
 
   public save(value: VALUE): Observable<KEY> {
-    return AbstractMappingRepository.ensureObservable(this.mapper.toDatabaseModel(value)).pipe(flatMap(model => fromPromise(this.databaseAccess.db.transaction("rw", this.table, () => {
-                (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+    return AbstractMappingRepository.ensureObservable(this.mapper.toDatabaseModel(value)).pipe(flatMap(model => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+                transaction["source"] = this.repositoryInstantiationTimestamp;
                 return this.table.put(model);
-            }))));
+    }))));
   }
 
   public saveAll(...values: Array<VALUE>): Observable<Array<KEY>> {
@@ -219,8 +220,8 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
         .pipe(
             flatMap(value => value),
             toArray(),
-            flatMap(models => fromPromise(this.databaseAccess.db.transaction("rw", this.table, () => {
-                (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+            flatMap(models => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+                transaction["source"] = this.repositoryInstantiationTimestamp;
                 return this.table.bulkPut(models);
             }))),
             map(key => [key])
@@ -228,15 +229,15 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
   }
 
   public findById(key: KEY): Observable<VALUE | null> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, () => {
-      (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+      transaction["source"] = this.repositoryInstantiationTimestamp;
       return this.table.get(key);
     })).pipe(flatMap(model => model ? AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model)) : of(null))));
   }
 
   public findAll(): Observable<Array<VALUE>> {
-      return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, () => {
-          (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+      return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+          transaction["source"] = this.repositoryInstantiationTimestamp;
           return this.table.toArray();
       })).pipe(
           map(models => models ? models.map(model => AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model))) : []),
@@ -247,29 +248,29 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
   }
 
   public getPrimaryKeys(): Observable<Array<KEY>> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, () => {
-      (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+      transaction["source"] = this.repositoryInstantiationTimestamp;
       return this.table.toCollection().primaryKeys();
     })));
   }
 
   public delete(key: KEY): Observable<void> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, () => {
-      (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+    return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+      transaction["source"] = this.repositoryInstantiationTimestamp;
       return this.table.delete(key);
     })));
   }
 
   public clear(): Observable<void> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, () => {
-      (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+    return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+      transaction["source"] = this.repositoryInstantiationTimestamp;
       return this.table.clear();
     })));
   }
 
   public count(): Observable<number> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, () => {
-      (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+      transaction["source"] = this.repositoryInstantiationTimestamp;
       return this.table.count();
     })));
   }
@@ -283,14 +284,14 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY> implements Re
   }
 }
 
-export class DBQuery<VALUE, MODEL, KEY> {
+export class DBQuery<VALUE, MODEL, KEY extends IndexableType> {
 
-  private internalQuery: Dexie.Collection<MODEL, KEY>;
+  private internalQuery: Collection<MODEL, KEY>;
 
-  constructor(private table: Dexie.Table<MODEL, KEY>,
+  constructor(private table: Table<MODEL, KEY>,
               private databaseAccess: DatabaseAccess,
               private mapper: RepositoryMapper<VALUE, MODEL>,
-              private repositoryInstantiationTimestamp: number) {
+              private repositoryInstantiationTimestamp: string) {
   }
 
   public andEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
@@ -339,8 +340,8 @@ export class DBQuery<VALUE, MODEL, KEY> {
   }
 
   public find(): Observable<Array<VALUE>> {
-      return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, () => {
-          (<any>Dexie.currentTransaction).source = this.repositoryInstantiationTimestamp;
+      return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+          transaction["source"] = this.repositoryInstantiationTimestamp;
           return this.internalQuery.toArray();
       })).pipe(
           map(models => models ? models.map(model => AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model))) : []),

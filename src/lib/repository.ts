@@ -1,6 +1,7 @@
 import {Observable} from "rxjs";
+import {IndexableType} from "dexie";
 
-export interface Repository<VALUE, KEY = string> {
+export interface Repository<VALUE, KEY extends IndexableType = string> {
 
     save(value: VALUE): Observable<KEY>
     saveAll(...values: Array<VALUE>): Observable<Array<KEY>>
