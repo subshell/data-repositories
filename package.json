@@ -1,6 +1,6 @@
 {
   "name": "@subshell/data-repositories",
-  "version": "1.0.5",
+  "version": "1.0.6-0",
   "description": "This library allows you to use convenient repositories backed by Dexie and IndexedDB.",
   "repository": "https://github.com/subshell/data-repositories",
   "main": "./dist/index.js",
