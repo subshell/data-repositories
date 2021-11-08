@@ -6,3 +6,4 @@ test
 .idea
 .circleci
 DEVELOPER.md
+junit.xml
