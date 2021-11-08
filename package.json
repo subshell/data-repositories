@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc --build src/tsconfig.lib.json",
     "test": "jest",
+    "test:ci": "jest --reporters=\"default\" --reporters=\"jest-junit\"",
     "test:watch": "jest --watch",
     "package": "npm run test && npm run build"
   },
@@ -14,17 +15,18 @@
   "author": "Team Weasel / subshell GmbH",
   "license": "MIT",
   "dependencies": {
-    "rxjs": "^6.6.3",
-    "dexie": "3.0.2",
-    "dexie-observable": "3.0.0-beta.10",
+    "rxjs": "^6.6.6",
+    "dexie": "3.0.3",
+    "dexie-observable": "3.0.0-beta.11",
     "reflect-metadata": "0.1.13"
   },
   "devDependencies": {
-    "@types/jest": "^26.0.15",
-    "fake-indexeddb": "3.1.2",
-    "jest": "26.6.0",
-    "jest-marbles": "^2.5.1",
-    "ts-jest": "^26.4.1",
-    "typescript": "4.0.3"
+    "@types/jest": "^27.0.2",
+    "fake-indexeddb": "3.1.7",
+    "jest": "27.3.1",
+    "jest-junit": "^13.0.0",
+    "jest-marbles": "^3.0.1",
+    "ts-jest": "^27.0.7",
+    "typescript": "4.4.4"
   }
 }

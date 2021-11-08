@@ -3,3 +3,4 @@
 /out-tsc
 node_modules
 .idea
+junit.xml
