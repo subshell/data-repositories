@@ -96,5 +96,8 @@ This functionality is very basic and far from what Dexie actually offers. This i
 It is recommended to have separate Dexie databases for every repository (due to some issues with Dexie and the versioning across multiple repositories). Use the `DatabaseAccess` class with care and
 try not to create those classes with duplicate names unless you know what you do.
 
-The repositories naturally work with RxJS and Observables. If you want to use JavaScript Promises instead you can just call `.toPromise()` on every returned Observable. 
-Due to the nature of IndexedDB there is no synchronous way to read or write any data.
+The repositories naturally work with RxJS and Observables. Due to the nature of IndexedDB there is no synchronous way to read or write any data.
+
+* * *
+
+Take a look at this project from the [subshell](https://subshell.com) team. We make [Sophora](https://subshell.com/sophora/): a content management software for content creation, curation, and distribution. [Join our team!](https://subshell.com/jobs/) | [Imprint](https://subshell.com/about/imprint/)
