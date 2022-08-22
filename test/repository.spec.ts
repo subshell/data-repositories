@@ -1,4 +1,3 @@
-import Dexie from 'dexie';
 import indexedDB from 'fake-indexeddb';
 import IDBKeyRange from 'fake-indexeddb/lib/FDBKeyRange';
 import 'jest';
@@ -19,6 +18,8 @@ import {
     VersionTestRepositoryTwo
 } from "./version-test-repository";
 import {CompoundIdRepository, CompoundTestObject} from "./compound-id-repository";
+import {firstValueFrom} from "rxjs";
+import Dexie from "dexie";
 
 export class TestDatabaseAccess extends DatabaseAccess {
     constructor(name: string) {
@@ -60,10 +61,10 @@ describe('A repository', () => {
 
         let obj = new NoMappingTestObject("gandalf", 42);
 
-        let key = await repo.save(obj).toPromise();
+        let key = await firstValueFrom(repo.save(obj));
         expect(key).toBe("gandalf");
 
-        let retrieved = await repo.findById("gandalf").toPromise();
+        let retrieved = await firstValueFrom(repo.findById("gandalf"));
         expect(retrieved).toBeInstanceOf(NoMappingTestObject);
         expect(retrieved).toEqual(obj);
         expect(retrieved.name).toEqual("gandalf");
@@ -78,9 +79,9 @@ describe('A repository', () => {
         let aragorn = new NoMappingTestObject("aragorn", 500);
         let legolas = new NoMappingTestObject("legolas", 2);
 
-        await repo.saveAll(gandalf, gimli, aragorn, legolas).toPromise();
+        await firstValueFrom(repo.saveAll(gandalf, gimli, aragorn, legolas));
 
-        let retrieved = await repo.findAll().toPromise();
+        let retrieved = await firstValueFrom(repo.findAll());
         expect(retrieved).toContainEqual(gandalf);
         expect(retrieved).toContainEqual(gimli);
         expect(retrieved).toContainEqual(aragorn);
@@ -92,10 +93,10 @@ describe('A repository', () => {
         const repo = new NoMappingRepository();
 
         let gandalf = new NoMappingTestObject("gandalf", 42);
-        await repo.save(gandalf).toPromise();
-        expect(await repo.count().toPromise()).toBe(1);
-        await repo.clear().toPromise();
-        expect(await repo.count().toPromise()).toBe(0);
+        await firstValueFrom(repo.save(gandalf));
+        expect(await firstValueFrom(repo.count())).toBe(1);
+        await firstValueFrom(repo.clear());
+        expect(await firstValueFrom(repo.count())).toBe(0);
     });
 
     test('should be able to delete values', async () => {
@@ -104,11 +105,11 @@ describe('A repository', () => {
         let gandalf = new NoMappingTestObject("gandalf", 42);
         let gimli = new NoMappingTestObject("gimli", 12);
 
-        await repo.saveAll(gandalf, gimli).toPromise();
-        expect(await repo.count().toPromise()).toBe(2);
+        await firstValueFrom(repo.saveAll(gandalf, gimli));
+        expect(await firstValueFrom(repo.count())).toBe(2);
 
-        await repo.delete("gandalf").toPromise();
-        let retrieved = await repo.findAll().toPromise();
+        await firstValueFrom(repo.delete("gandalf"));
+        let retrieved = await firstValueFrom(repo.findAll());
         expect(retrieved).toHaveLength(1);
         expect(retrieved).toContainEqual(gimli);
     });
@@ -117,18 +118,18 @@ describe('A repository', () => {
         const repo = new MappingTestRepository();
 
         let gandalf = new TestObject("gandalf@the-whi.te", "gandalf");
-        await repo.save(gandalf).toPromise();
-        expect(await repo.count().toPromise()).toBe(1);
-        expect(await repo.findById("gandalf@the-whi.te").toPromise()).toEqual(gandalf);
+        await firstValueFrom(repo.save(gandalf));
+        expect(await firstValueFrom(repo.count())).toBe(1);
+        expect(await firstValueFrom(repo.findById("gandalf@the-whi.te"))).toEqual(gandalf);
     });
 
     test('should be able to map values to a model and back using observables', async () => {
         const repo = new ObservableMappingTestRepository();
 
         let gandalf = new TestObject("gandalf@the-whi.te", "gandalf");
-        await repo.save(gandalf).toPromise();
-        expect(await repo.count().toPromise()).toBe(1);
-        expect(await repo.findById("gandalf@the-whi.te").toPromise()).toEqual(gandalf);
+        await firstValueFrom(repo.save(gandalf));
+        expect(await firstValueFrom(repo.count())).toBe(1);
+        expect(await firstValueFrom(repo.findById("gandalf@the-whi.te"))).toEqual(gandalf);
     });
 
     test('should be able to store values using incremental ids', async () => {
@@ -145,17 +146,17 @@ describe('A repository', () => {
         let affc = new IncrementalTestClass("A Feast For Crows", "GRRM");
         let adwd = new IncrementalTestClass("A Dance With Dragons", "GRRM");
 
-        await repo.saveAll(fotr, ttt, rork, agot, acok, asos, affc, adwd).toPromise();
+        await firstValueFrom(repo.saveAll(fotr, ttt, rork, agot, acok, asos, affc, adwd));
 
-        let firstItem = await repo.findById(1).toPromise();
+        let firstItem = await firstValueFrom(repo.findById(1));
         expect(firstItem.author).toEqual(fotr.author);
         expect(firstItem.title).toEqual(fotr.title);
 
-        let middleItem = await repo.findById(4).toPromise();
+        let middleItem = await firstValueFrom(repo.findById(4));
         expect(middleItem.author).toEqual(agot.author);
         expect(middleItem.title).toEqual(agot.title);
 
-        let lastItem = await repo.findById(8).toPromise();
+        let lastItem = await firstValueFrom(repo.findById(8));
         expect(lastItem.author).toEqual(adwd.author);
         expect(lastItem.title).toEqual(adwd.title);
     });
@@ -174,18 +175,18 @@ describe('A repository', () => {
         let affc = new IncrementalTestClass("A Feast For Crows", "GRRM");
         let adwd = new IncrementalTestClass("A Dance With Dragons", "GRRM");
 
-        await repo.saveAll(fotr, ttt, rork, agot, acok, asos, affc, adwd).toPromise();
+        await firstValueFrom(repo.saveAll(fotr, ttt, rork, agot, acok, asos, affc, adwd));
 
-        let grrms = await repo.search().andEqual("author", "GRRM").find().toPromise();
+        let grrms = await firstValueFrom(repo.search().andEqual("author", "GRRM").find());
         expect(grrms).toHaveLength(5);
 
-        let jrrts = await repo.search().andEqual("author", "JRRT").find().toPromise();
+        let jrrts = await firstValueFrom(repo.search().andEqual("author", "JRRT").find());
         expect(jrrts).toHaveLength(3);
 
-        let feastForCrows = await repo.search().andEqual("author", "GRRM")
+        let feastForCrows = await firstValueFrom(repo.search().andEqual("author", "GRRM")
             .andEqual("title", "A Feast For Crows")
             .andNotEqual("author", "JRRT")
-            .find().toPromise();
+            .find());
         expect(feastForCrows).toHaveLength(1);
         expect(feastForCrows[0].title).toBe(affc.title);
     });
@@ -203,11 +204,11 @@ describe('A repository', () => {
         let affc = new IncrementalTestClass("A Feast For Crows", "GRRM");
         let adwd = new IncrementalTestClass("A Dance With Dragons", "GRRM");
 
-        await repo.saveAll(fotr, ttt, rork, agot, acok, asos, affc, adwd).toPromise();
+        await firstValueFrom(repo.saveAll(fotr, ttt, rork, agot, acok, asos, affc, adwd));
 
-        expect(await repo.count().toPromise()).toBe(8);
+        expect(await firstValueFrom(repo.count())).toBe(8);
 
-        let itemsWithOfInTheTitle = await repo.search().and(model => model.title.includes("Of")).find().toPromise();
+        let itemsWithOfInTheTitle = await firstValueFrom(repo.search().and(model => model.title.includes("Of")).find());
 
         expect(itemsWithOfInTheTitle).toBeDefined();
         expect(itemsWithOfInTheTitle).toHaveLength(5);
@@ -221,40 +222,40 @@ describe('A repository', () => {
         let testObj2 = new CompoundTestObject("Gimli", "the Dwarf");
         let testObj3 = new CompoundTestObject("Gandalf", "the White", "again");
 
-        await repo.saveAll(testObj1, testObj2).toPromise();
-        expect(await repo.count().toPromise()).toBe(2);
+        await firstValueFrom(repo.saveAll(testObj1, testObj2));
+        expect(await firstValueFrom(repo.count())).toBe(2);
 
-        await repo.save(testObj3).toPromise();
-        expect(await repo.count().toPromise()).toBe(2);
+        await firstValueFrom(repo.save(testObj3));
+        expect(await firstValueFrom(repo.count())).toBe(2);
 
-        let gandalf = await repo.findById(["Gandalf", "the White"]).toPromise();
+        let gandalf = await firstValueFrom(repo.findById(["Gandalf", "the White"]));
         expect(gandalf).toBeInstanceOf(CompoundTestObject);
         expect(gandalf.nameSuffix).toBe("again");
 
-        let found = await repo.search().andEqual("firstName", "Gandalf")
+        let found = await firstValueFrom(repo.search().andEqual("firstName", "Gandalf")
             .andEqual("lastName", "the White")
             .find()
-            .toPromise();
+            );
         expect(found).toHaveLength(1);
     });
 
     test('should not break when multiple databases use different versions', async () => {
         let repo1 = new VersionTestRepositoryTwo();
         const testObject1 = new VersioningObjectTwo("gimli", "moria", "gimli@dwarfs.com");
-        await repo1.save(testObject1).toPromise();
+        await firstValueFrom(repo1.save(testObject1));
 
 
         let repo2 = new VersionTestRepositoryThree();
         const testObject2 = new VersioningObjectThree("frodo", "04012345678");
-        await repo2.save(testObject2).toPromise();
+        await firstValueFrom(repo2.save(testObject2));
 
 
         let repo3 = new VersionTestRepositoryFour();
         const testObject3 = new VersioningObjectFour("gandalf", "frodo");
 
-        await repo3.save(testObject3).toPromise();
+        await firstValueFrom(repo3.save(testObject3));
 
-        let found1 = await repo1.findAll().toPromise();
+        let found1 = await firstValueFrom(repo1.findAll());
         expect(found1).toHaveLength(1);
         expect(found1[0]).toEqual(testObject1);
     });
@@ -263,21 +264,21 @@ describe('A repository', () => {
         let repo = new VersionTestRepositoryOne();
         const testObject1 = new VersioningObjectOne("gandalf", "gandalf@yahoo.com");
 
-        await repo.save(testObject1).toPromise();
+        await firstValueFrom(repo.save(testObject1));
         closeDatabase();
         openDatabase();
 
         let repo2 = new VersionTestRepositoryTwo();
-        expect(await repo2.count().toPromise()).toBe(1);
+        expect(await firstValueFrom(repo2.count())).toBe(1);
 
-        let gandalf = await repo2.findById("gandalf").toPromise();
+        let gandalf = await firstValueFrom(repo2.findById("gandalf"));
         expect(gandalf).toEqual(testObject1);
         expect(gandalf).toBeInstanceOf(VersioningObjectTwo);
         expect(gandalf.address).toBeUndefined();
 
         const testObject2 = new VersioningObjectTwo("gimli", "moria", "gimli@dwarfs.com");
-        await repo2.save(testObject2).toPromise();
-        const foundGimliByAddedProperty = await repo2.search().andEqual("address", "moria").find().toPromise();
+        await firstValueFrom(repo2.save(testObject2));
+        const foundGimliByAddedProperty = await firstValueFrom(repo2.search().andEqual("address", "moria").find());
         expect(foundGimliByAddedProperty).toHaveLength(1);
         expect(foundGimliByAddedProperty[0]).toEqual(testObject2);
     });

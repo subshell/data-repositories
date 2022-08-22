@@ -1,20 +1,20 @@
 import Dexie, {IndexableType, Table} from "dexie";
 import 'dexie-observable';
 import {defer, from, Observable, of, Subject} from "rxjs";
-import {fromPromise} from "rxjs/internal-compatibility";
 import {combineAll, concatAll, defaultIfEmpty, flatMap, map, toArray} from "rxjs/operators";
 import {Class} from "./class";
 import {DatabaseAccess} from "./database-access";
 import {
-    DATABASE_COMPOUNDID_METADATA_KEY,
-    DATABASE_DECORATOR_OPTIONS,
-    DATABASE_ID_METADATA_KEY,
-    DATABASE_INCREMENTALID_METADATA_KEY,
-    DATABASE_INDEXED_METADATA_KEY,
-    DATABASE_UNIQUE_METADATA_KEY,
-    DatabaseDecoratorOptions
+	DATABASE_COMPOUNDID_METADATA_KEY,
+	DATABASE_DECORATOR_OPTIONS,
+	DATABASE_ID_METADATA_KEY,
+	DATABASE_INCREMENTALID_METADATA_KEY,
+	DATABASE_INDEXED_METADATA_KEY,
+	DATABASE_UNIQUE_METADATA_KEY,
+	DatabaseDecoratorOptions
 } from "./database-decorators";
 import {Repository} from "./repository";
+import {fromPromise} from "rxjs/internal/observable/innerFrom";
 import Collection = Dexie.Collection;
 
 export interface RepositoryMapper<VALUE, MODEL> {
