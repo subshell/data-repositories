@@ -1,3 +1,6 @@
+// Import structuredClone polyfill from core-js
+import 'core-js/features/structured-clone';
+
 import indexedDB from 'fake-indexeddb';
 import IDBKeyRange from 'fake-indexeddb/lib/FDBKeyRange';
 import 'jest';
@@ -52,23 +55,28 @@ describe('A repository', () => {
     }
 
     test('should not be created when the stored object does not have a field decorated with @Id or @IncrementalId', () => {
-        expect(() => new NoDecoratedFieldsRepository()).toThrowError(/.*@Id.*@IncrementalId.*/g);
+        expect(() => new NoDecoratedFieldsRepository()).toThrow(/.*@Id.*@IncrementalId.*/g);
     });
 
     test('should be created and save and retrieve a value', async () => {
-        const repo = new NoMappingRepository();
-        expect(repo.repositoryName).toEqual("NoMappingRepository");
+        try {
+            const repo = new NoMappingRepository();
+            expect(repo.repositoryName).toEqual("NoMappingRepository");
 
-        let obj = new NoMappingTestObject("gandalf", 42);
+            let obj = new NoMappingTestObject("gandalf", 42);
 
-        let key = await firstValueFrom(repo.save(obj));
-        expect(key).toBe("gandalf");
+            let key = await firstValueFrom(repo.save(obj));
+            expect(key).toBe("gandalf");
 
-        let retrieved = await firstValueFrom(repo.findById("gandalf"));
-        expect(retrieved).toBeInstanceOf(NoMappingTestObject);
-        expect(retrieved).toEqual(obj);
-        expect(retrieved.name).toEqual("gandalf");
-        expect(retrieved.salary).toEqual(42);
+            let retrieved = await firstValueFrom(repo.findById("gandalf"));
+            expect(retrieved).toBeInstanceOf(NoMappingTestObject);
+            expect(retrieved).toEqual(obj);
+            expect(retrieved.name).toEqual("gandalf");
+            expect(retrieved.salary).toEqual(42);
+        } catch (error) {
+            console.error("Test error:", error);
+            throw error;
+        }
     });
 
     test('should save and find multiple values', async () => {
