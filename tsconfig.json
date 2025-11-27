@@ -1,11 +1,9 @@
 {
   "compilerOptions": {
-    "target": "es5",
-    "module": "es6",
+    "target": "ES2022",
     "lib": [
       "DOM",
-      "ES2016",
-      "ES2017"
+	  "ES2022"
     ],
     "declaration": true,
     "declarationMap": true,
