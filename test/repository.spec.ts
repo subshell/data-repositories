@@ -59,24 +59,19 @@ describe('A repository', () => {
     });
 
     test('should be created and save and retrieve a value', async () => {
-        try {
-            const repo = new NoMappingRepository();
-            expect(repo.repositoryName).toEqual("NoMappingRepository");
+		const repo = new NoMappingRepository();
+		expect(repo.repositoryName).toEqual("NoMappingRepository");
 
-            let obj = new NoMappingTestObject("gandalf", 42);
+		let obj = new NoMappingTestObject("gandalf", 42);
 
-            let key = await firstValueFrom(repo.save(obj));
-            expect(key).toBe("gandalf");
+		let key = await firstValueFrom(repo.save(obj));
+		expect(key).toBe("gandalf");
 
-            let retrieved = await firstValueFrom(repo.findById("gandalf"));
-            expect(retrieved).toBeInstanceOf(NoMappingTestObject);
-            expect(retrieved).toEqual(obj);
-            expect(retrieved.name).toEqual("gandalf");
-            expect(retrieved.salary).toEqual(42);
-        } catch (error) {
-            console.error("Test error:", error);
-            throw error;
-        }
+		let retrieved = await firstValueFrom(repo.findById("gandalf"));
+		expect(retrieved).toBeInstanceOf(NoMappingTestObject);
+		expect(retrieved).toEqual(obj);
+		expect(retrieved.name).toEqual("gandalf");
+		expect(retrieved.salary).toEqual(42);
     });
 
     test('should save and find multiple values', async () => {
