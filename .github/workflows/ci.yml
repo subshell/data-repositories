@@ -27,12 +27,14 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run tests (with JUnit report)
+      - name: Run tests
         run: npm run test:ci
 
       - name: Publish test results
         if: always()
-        uses: actions/upload-test-results@v1
+        uses: dorny/test-reporter@v1
         with:
-          files: junit.xml
-          format: junit
+          name: Test Results
+          path: junit.xml
+          reporter: jest-junit
+          fail-on-error: false
