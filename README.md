@@ -28,7 +28,7 @@ class Person {
 
 class PersonRepository extends AbstractRepository<Person, string> {
     constructor() {
-        super(new DatabaseAccess(PersonRepository.name), Person);
+        super(DatabaseAccess.get(PersonRepository.name), Person);
     }
 }
 
