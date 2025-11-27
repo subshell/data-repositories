@@ -179,28 +179,22 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY extends Indexa
 	}
 
 	private registerEventsListener() {
-		// In-tab events via Dexie table hooks
-		// Setup cross-tab broadcast channel if available (native BroadcastChannel)
 		const repoThis = this;
 		try {
-			const BC = (globalThis as any).BroadcastChannel;
-			if (typeof BC === 'function') {
-				const channelName = `data-repositories:${this.databaseAccess.db.name}:${this.repositoryName}`;
-				const bc = new BC(channelName);
-				this.broadcast = bc;
-				bc.onmessage = (ev: MessageEvent) => {
-					const change = ev.data;
-					if (!change || change.source === this.repositoryInstantiationTimestamp) return;
-					if (change.table !== this.repositoryName) return;
-					const repositoryEvent: RepositoryEvent<VALUE, KEY> = {
-						type: change.type,
-						key: change.key,
-						newValue: change.newValue,
-						previousValue: change.previousValue
-					};
-					this.eventsSubject.next(repositoryEvent);
+			const channelName = `data-repositories:${this.databaseAccess.db.name}:${this.repositoryName}`;
+			this.broadcast = new BroadcastChannel(channelName);
+			this.broadcast.onmessage = (ev: MessageEvent) => {
+				const change = ev.data;
+				if (!change || change.source === this.repositoryInstantiationTimestamp) return;
+				if (change.table !== this.repositoryName) return;
+				const repositoryEvent: RepositoryEvent<VALUE, KEY> = {
+					type: change.type,
+					key: change.key,
+					newValue: change.newValue,
+					previousValue: change.previousValue
 				};
-			}
+				this.eventsSubject.next(repositoryEvent);
+			};
 		} catch (_) {
 			// ignore if BroadcastChannel not available
 		}
