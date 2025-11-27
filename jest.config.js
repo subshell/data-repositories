@@ -1,5 +1,5 @@
 /** @type {import('ts-jest/dist/types').InitialOptionsTsJest} */
-module.exports = {
+const config = {
 	preset: 'ts-jest',
 	testEnvironment: 'jsdom',
 	rootDir: 'test',
@@ -8,3 +8,5 @@ module.exports = {
 		"^dexie$": require.resolve("dexie"),
 	}
 };
+
+module.exports = config;

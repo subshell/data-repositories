@@ -1,6 +1,5 @@
-import Dexie, {IndexableType, Table} from "dexie";
-import 'dexie-observable';
-import {defer, from, Observable, of, Subject} from "rxjs";
+import {Collection, IndexableType, Table, Transaction} from "dexie";
+import {defer, from, Observable, of, Subject, zip} from "rxjs";
 import {combineAll, concatAll, defaultIfEmpty, flatMap, map, toArray} from "rxjs/operators";
 import {Class} from "./class";
 import {DatabaseAccess} from "./database-access";
@@ -15,339 +14,405 @@ import {
 } from "./database-decorators";
 import {Repository} from "./repository";
 import {fromPromise} from "rxjs/internal/observable/innerFrom";
-import Collection = Dexie.Collection;
 
 export interface RepositoryMapper<VALUE, MODEL> {
-  toDatabaseModel(value: VALUE): MODEL | Observable<MODEL>;
-  fromDatabaseModel(model: MODEL): VALUE | Observable<VALUE>;
+	toDatabaseModel(value: VALUE): MODEL | Observable<MODEL>;
+
+	fromDatabaseModel(model: MODEL): VALUE | Observable<VALUE>;
 }
 
 export class NoopRepositoryMapper implements RepositoryMapper<any, any> {
-  fromDatabaseModel(model: any): any {
-    return model;
-  }
-  toDatabaseModel(value: any): any {
-    return value;
-  }
+	fromDatabaseModel(model: any): any {
+		return model;
+	}
+
+	toDatabaseModel(value: any): any {
+		return value;
+	}
 }
 
 export enum RepositoryEventType {
-  CREATE, UPDATE, DELETE
+	CREATE, UPDATE, DELETE
 }
 
 export interface RepositoryEvent<VALUE, KEY> {
-  type: RepositoryEventType
-  key: KEY
-  newValue?: VALUE
-  previousValue?: VALUE
+	type: RepositoryEventType
+	key: KEY
+	newValue?: VALUE
+	previousValue?: VALUE
 }
 
 interface MetaFieldOptions {
-  unique?: boolean
-  incremental?: boolean
+	unique?: boolean
+	incremental?: boolean
 }
+
 interface MetaField extends MetaFieldOptions {
-  field: string | symbol
+	field: string | symbol
 }
 
 export abstract class AbstractMappingRepository<VALUE, MODEL, KEY extends IndexableType> implements Repository<VALUE, KEY> {
 
-  public readonly repositoryName: string;
+	public readonly repositoryName: string;
 
-  public idPropertyName: string;
+	public idPropertyName: string;
 
-  private eventsSubject = new Subject<RepositoryEvent<VALUE, KEY>>();
-  private repositoryInstantiationTimestamp = String(new Date().getTime()); // used as a unique id across tabs
+	private eventsSubject = new Subject<RepositoryEvent<VALUE, KEY>>();
+	private repositoryInstantiationTimestamp = String(new Date().getTime()); // used as a unique id across tabs
+	private broadcast?: BroadcastChannel;
 
-  constructor(private databaseAccess: DatabaseAccess,
-              private modelType: Class<MODEL>,
-              private mapper: RepositoryMapper<VALUE, MODEL>,
-              repositoryName?: string) {
-    this.repositoryName = repositoryName || this.constructor.name;
-    this.createDatabaseVersions();
-    this.table.mapToClass(modelType);
-    this.registerEventsListener();
-  }
+	constructor(private databaseAccess: DatabaseAccess,
+				private modelType: Class<MODEL>,
+				private mapper: RepositoryMapper<VALUE, MODEL>,
+				repositoryName?: string) {
+		this.repositoryName = repositoryName || this.constructor.name;
+		this.createDatabaseVersions();
+		this.table.mapToClass(modelType);
+		this.registerEventsListener();
+	}
 
-  private get table(): Table<MODEL, KEY> {
-    return this.databaseAccess.db.table(this.repositoryName);
-  }
+	private get table(): Table<MODEL, KEY> {
+		return this.databaseAccess.db.table(this.repositoryName);
+	}
 
-  public createDatabaseVersions() {
-    if (this.databaseAccess.db.isOpen()) {
-      this.databaseAccess.db.close();
-    }
-    let relevantVersions = this.getSchemaVersions();
-    let highestVersion = relevantVersions[relevantVersions.length - 1];
-    let lowestVersion = relevantVersions[0];
+	public createDatabaseVersions() {
+		if (this.databaseAccess.db.isOpen()) {
+			this.databaseAccess.db.close();
+		}
+		let relevantVersions = this.getSchemaVersions();
+		let highestVersion = relevantVersions[relevantVersions.length - 1];
+		let lowestVersion = relevantVersions[0];
 
-    for(let version = lowestVersion; version <= Math.max(highestVersion, this.databaseAccess.db.verno); version++) {
-      const schema = this.buildTableSchema(version);
-      const dexieSchema = {};
-      dexieSchema[this.repositoryName] = schema.schemaString;
-      this.databaseAccess.db.version(version).stores(dexieSchema);
-      this.idPropertyName = schema.idPropertyName;
-    }
-    this.databaseAccess.db.open();
-  }
+		for (let version = lowestVersion; version <= Math.max(highestVersion, this.databaseAccess.db.verno); version++) {
+			const schema = this.buildTableSchema(version);
+			const dexieSchema = {};
+			dexieSchema[this.repositoryName] = schema.schemaString;
+			this.databaseAccess.db.version(version).stores(dexieSchema);
+			this.idPropertyName = schema.idPropertyName;
+		}
+		this.databaseAccess.db.open();
+	}
 
-  private getSchemaVersions(): Array<number> {
-    let metadata: Map<string | symbol, DatabaseDecoratorOptions> = Reflect.getMetadata(DATABASE_DECORATOR_OPTIONS, this.modelType);
-    if (!metadata) {
-      throw `At least one field of ${this.modelType.name} must be decorated with @Unique, @Id or @IncrementalId!`;
-    }
-    let versions: Array<number> = [];
-    metadata.forEach(value => {
-      versions.push(value.sinceVersion);
-    });
-    return versions.sort();
-  }
+	private getSchemaVersions(): Array<number> {
+		let metadata: Map<string | symbol, DatabaseDecoratorOptions> = Reflect.getMetadata(DATABASE_DECORATOR_OPTIONS, this.modelType);
+		if (!metadata) {
+			throw `At least one field of ${this.modelType.name} must be decorated with @Unique, @Id or @IncrementalId!`;
+		}
+		let versions: Array<number> = [];
+		metadata.forEach(value => {
+			versions.push(value.sinceVersion);
+		});
+		return versions.sort();
+	}
 
-  private findRelevantFieldsForVersion(version: number): Array<string | symbol> {
-    let metadata: Map<string | symbol, DatabaseDecoratorOptions> = Reflect.getMetadata(DATABASE_DECORATOR_OPTIONS, this.modelType);
-    let fields: Array<string | symbol> = [];
-    metadata.forEach((value, key) => {
-      if (value.sinceVersion <= version) {
-        fields.push(key);
-      }
-    });
-    return fields;
-  }
+	private findRelevantFieldsForVersion(version: number): Array<string | symbol> {
+		let metadata: Map<string | symbol, DatabaseDecoratorOptions> = Reflect.getMetadata(DATABASE_DECORATOR_OPTIONS, this.modelType);
+		let fields: Array<string | symbol> = [];
+		metadata.forEach((value, key) => {
+			if (value.sinceVersion <= version) {
+				fields.push(key);
+			}
+		});
+		return fields;
+	}
 
-  private buildTableSchema(version: number): {schemaString: string, idPropertyName: string} {
-    const relevantFieldsForThisVersion = this.findRelevantFieldsForVersion(version);;
-    let idField: string | symbol = Reflect.getMetadata(DATABASE_ID_METADATA_KEY, this.modelType);
-    let incrementalIdField: string | symbol = Reflect.getMetadata(DATABASE_INCREMENTALID_METADATA_KEY, this.modelType);
-    let compoundIdFields: Array<string | symbol> = Reflect.getMetadata(DATABASE_COMPOUNDID_METADATA_KEY, this.modelType) || [];
-    let uniqueFields: Array<string | symbol> = Reflect.getMetadata(DATABASE_UNIQUE_METADATA_KEY, this.modelType) || [];
-    let indexedFields: Array<string | symbol> = Reflect.getMetadata(DATABASE_INDEXED_METADATA_KEY, this.modelType) || [];
+	private buildTableSchema(version: number): { schemaString: string, idPropertyName: string } {
+		const relevantFieldsForThisVersion = this.findRelevantFieldsForVersion(version);
+		;
+		let idField: string | symbol = Reflect.getMetadata(DATABASE_ID_METADATA_KEY, this.modelType);
+		let incrementalIdField: string | symbol = Reflect.getMetadata(DATABASE_INCREMENTALID_METADATA_KEY, this.modelType);
+		let compoundIdFields: Array<string | symbol> = Reflect.getMetadata(DATABASE_COMPOUNDID_METADATA_KEY, this.modelType) || [];
+		let uniqueFields: Array<string | symbol> = Reflect.getMetadata(DATABASE_UNIQUE_METADATA_KEY, this.modelType) || [];
+		let indexedFields: Array<string | symbol> = Reflect.getMetadata(DATABASE_INDEXED_METADATA_KEY, this.modelType) || [];
 
-    if (idField && !relevantFieldsForThisVersion.includes(idField)) {
-      idField = null;
-    }
-    if (incrementalIdField && !relevantFieldsForThisVersion.includes(incrementalIdField)) {
-      incrementalIdField = null;
-    }
-    compoundIdFields = compoundIdFields.filter(field => relevantFieldsForThisVersion.includes(field));
-    uniqueFields = uniqueFields.filter(field => relevantFieldsForThisVersion.includes(field));
-    indexedFields = indexedFields.filter(field => relevantFieldsForThisVersion.includes(field));
+		if (idField && !relevantFieldsForThisVersion.includes(idField)) {
+			idField = null;
+		}
+		if (incrementalIdField && !relevantFieldsForThisVersion.includes(incrementalIdField)) {
+			incrementalIdField = null;
+		}
+		compoundIdFields = compoundIdFields.filter(field => relevantFieldsForThisVersion.includes(field));
+		uniqueFields = uniqueFields.filter(field => relevantFieldsForThisVersion.includes(field));
+		indexedFields = indexedFields.filter(field => relevantFieldsForThisVersion.includes(field));
 
-    if (!idField && !incrementalIdField && !compoundIdFields.length) {
-      throw `At least one field of ${this.modelType.name} in version ${version} must be decorated with @Id(), @IncrementalId() or @CompoundId()!`;
-    }
+		if (!idField && !incrementalIdField && !compoundIdFields.length) {
+			throw `At least one field of ${this.modelType.name} in version ${version} must be decorated with @Id(), @IncrementalId() or @CompoundId()!`;
+		}
 
-    let allFields = this.mapToFieldsMeta(uniqueFields, {unique: true}).concat(this.mapToFieldsMeta(indexedFields));
+		let allFields = this.mapToFieldsMeta(uniqueFields, {unique: true}).concat(this.mapToFieldsMeta(indexedFields));
 
-    if (idField) {
-      allFields.splice(0, 0, {unique: true, field: idField});
-    } else if (incrementalIdField) {
-      allFields.splice(0, 0, {incremental: true, field: incrementalIdField});
-    } else if (compoundIdFields.length) {
-      allFields.splice(0, 0, this.createCompoundIdField(compoundIdFields));
-    }
+		if (idField) {
+			allFields.splice(0, 0, {unique: true, field: idField});
+		} else if (incrementalIdField) {
+			allFields.splice(0, 0, {incremental: true, field: incrementalIdField});
+		} else if (compoundIdFields.length) {
+			allFields.splice(0, 0, this.createCompoundIdField(compoundIdFields));
+		}
 
-    let schemaString = "";
-    let idPropertyName = "";
-    for (let i = 0; i < allFields.length; i++) {
-      let field = allFields[i];
-      schemaString += `${field.incremental ? '++' : ''}${field.unique ? '&' : ''}${String(field.field)}${i < allFields.length - 1 ? ', ' : ''}`;
-      if (i === 0) {
-        idPropertyName = String(field.field);
-      }
-    }
+		let schemaString = "";
+		let idPropertyName = "";
+		for (let i = 0; i < allFields.length; i++) {
+			let field = allFields[i];
+			schemaString += `${field.incremental ? '++' : ''}${field.unique ? '&' : ''}${String(field.field)}${i < allFields.length - 1 ? ', ' : ''}`;
+			if (i === 0) {
+				idPropertyName = String(field.field);
+			}
+		}
 
-    return {schemaString, idPropertyName};
-  }
+		return {schemaString, idPropertyName};
+	}
 
-  private createCompoundIdField(fields: Array<string | symbol>): MetaField {
-    return {
-      field: `[${fields.join("+")}]`
-    };
-  }
+	private createCompoundIdField(fields: Array<string | symbol>): MetaField {
+		return {
+			field: `[${fields.join("+")}]`
+		};
+	}
 
-  private mapToFieldsMeta(fields: Array<string | symbol>, options: MetaFieldOptions = {}): Array<MetaField> {
-    return fields.map(field => {
-      return {
-        incremental: options.incremental,
-        unique: options.unique,
-        field: field
-      }
-    });
-  }
+	private mapToFieldsMeta(fields: Array<string | symbol>, options: MetaFieldOptions = {}): Array<MetaField> {
+		return fields.map(field => {
+			return {
+				incremental: options.incremental,
+				unique: options.unique,
+				field: field
+			}
+		});
+	}
 
-  private registerEventsListener() {
-    this.databaseAccess.db.on("changes",changes => {
-      changes.forEach(change => {
-        if (change.table !== this.repositoryName || change.source && change.source === this.repositoryInstantiationTimestamp) {
-          return;
-        }
-        let repositoryEvent: RepositoryEvent<VALUE, KEY> = {
-          type: this.getRepositoryEventTypeFromDexieType(change.type),
-          key: change.key,
-          newValue: (<any>change).obj,
-          previousValue: (<any>change).oldObj
-        };
-        this.eventsSubject.next(repositoryEvent);
-      });
-    });
-  }
+	private registerEventsListener() {
+		const repoThis = this;
+		try {
+			const channelName = `data-repositories:${this.databaseAccess.db.name}:${this.repositoryName}`;
+			this.broadcast = new BroadcastChannel(channelName);
+			this.broadcast.onmessage = (ev: MessageEvent) => {
+				const change = ev.data;
+				if (!change || change.source === this.repositoryInstantiationTimestamp) return;
+				if (change.table !== this.repositoryName) return;
+				const repositoryEvent: RepositoryEvent<VALUE, KEY> = {
+					type: change.type,
+					key: change.key,
+					newValue: change.newValue,
+					previousValue: change.previousValue
+				};
+				this.eventsSubject.next(repositoryEvent);
+			};
+		} catch (_) {
+			// ignore if BroadcastChannel not available
+		}
 
-  private getRepositoryEventTypeFromDexieType(dexieType: number): RepositoryEventType {
-    switch (dexieType) {
-      case 1: return RepositoryEventType.CREATE;
-      case 2: return RepositoryEventType.UPDATE;
-      case 3: return RepositoryEventType.DELETE;
-    }
-  }
+		// creating
+		this.table.hook('creating', function (this: any, primKey: KEY, obj: MODEL, tx: Transaction) {
+			const source = repoThis.repositoryInstantiationTimestamp;
+			const isSelf = !!(tx && (tx as any).source === source);
+			this.onsuccess = (key: KEY) => {
+				AbstractMappingRepository.ensureObservable(repoThis.mapper.fromDatabaseModel(obj)).subscribe(newValue => {
+					const event: RepositoryEvent<VALUE, KEY> = {type: RepositoryEventType.CREATE, key, newValue: newValue};
+					if (!isSelf) {
+						repoThis.eventsSubject.next(event);
+					}
+					repoThis.broadcast?.postMessage({table: repoThis.repositoryName, type: RepositoryEventType.CREATE, key, newValue: newValue, source});
+				});
+			};
+		});
 
-  public static ensureObservable<T>(value: T | Observable<T>): Observable<T> {
-    if (value instanceof Observable) {
-        return value;
-    } else {
-        return of(value);
-    }
-  }
+		// updating
+		this.table.hook('updating', function (this: any, modifications: any, primKey: KEY, prev: MODEL, tx: Transaction) {
+			const source = repoThis.repositoryInstantiationTimestamp;
+			const isSelf = !!(tx && (tx as any).source === source);
+			// onsuccess provides the resulting object as this.value
+			this.onsuccess = (updatedObj: any) => {
+				zip(AbstractMappingRepository.ensureObservable(repoThis.mapper.fromDatabaseModel(prev)), AbstractMappingRepository.ensureObservable(repoThis.mapper.fromDatabaseModel(updatedObj)))
+					.subscribe(([previousValue, updatedValue]) => {
+						const event: RepositoryEvent<VALUE, KEY> = {
+							type: RepositoryEventType.UPDATE,
+							key: primKey,
+							newValue: updatedValue,
+							previousValue: previousValue
+						};
+						if (!isSelf) {
+							repoThis.eventsSubject.next(event);
+						}
+						repoThis.broadcast?.postMessage({
+							table: repoThis.repositoryName,
+							type: RepositoryEventType.UPDATE,
+							key: primKey,
+							newValue: updatedValue,
+							previousValue: previousValue,
+							source
+						});
+					});
+			};
+		});
 
-  public save(value: VALUE): Observable<KEY> {
-    return AbstractMappingRepository.ensureObservable(this.mapper.toDatabaseModel(value)).pipe(flatMap(model => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
-                transaction["source"] = this.repositoryInstantiationTimestamp;
-                return this.table.put(model);
-    }))));
-  }
+		// deleting
+		this.table.hook('deleting', function (this: any, primKey: KEY, obj: MODEL, tx: Transaction) {
+			const source = repoThis.repositoryInstantiationTimestamp;
+			const isSelf = !!(tx && (tx as any).source === source);
+			this.onsuccess = () => {
+				AbstractMappingRepository.ensureObservable(repoThis.mapper.fromDatabaseModel(obj)).subscribe(previousValue => {
+					const event: RepositoryEvent<VALUE, KEY> = {type: RepositoryEventType.DELETE, key: primKey, previousValue: previousValue};
+					if (!isSelf) {
+						repoThis.eventsSubject.next(event);
+					}
+					repoThis.broadcast?.postMessage({
+						table: repoThis.repositoryName,
+						type: RepositoryEventType.DELETE,
+						key: primKey,
+						previousValue: previousValue,
+						source
+					});
+				});
+			};
+		});
+	}
 
-  public saveAll(...values: Array<VALUE>): Observable<Array<KEY>> {
-    return from(values.map(value => AbstractMappingRepository.ensureObservable(this.mapper.toDatabaseModel(value))))
-        .pipe(
-            flatMap(value => value),
-            toArray(),
-            flatMap(models => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
-                transaction["source"] = this.repositoryInstantiationTimestamp;
-                return this.table.bulkPut(models);
-            }))),
-            map(key => [key])
-            );
-  }
+	public static ensureObservable<T>(value: T | Observable<T>): Observable<T> {
+		if (value instanceof Observable) {
+			return value;
+		} else {
+			return of(value);
+		}
+	}
 
-  public findById(key: KEY): Observable<VALUE | null> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
-      transaction["source"] = this.repositoryInstantiationTimestamp;
-      return this.table.get(key);
-    })).pipe(flatMap(model => model ? AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model)) : of(null))));
-  }
+	public save(value: VALUE): Observable<KEY> {
+		return AbstractMappingRepository.ensureObservable(this.mapper.toDatabaseModel(value)).pipe(flatMap(model => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.put(model);
+		}))));
+	}
 
-  public findAll(): Observable<Array<VALUE>> {
-      return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
-          transaction["source"] = this.repositoryInstantiationTimestamp;
-          return this.table.toArray();
-      })).pipe(
-          map(models => models ? models.map(model => AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model))) : []),
-          concatAll(),
-          combineAll(),
-          defaultIfEmpty([])
-      ));
-  }
+	public saveAll(...values: Array<VALUE>): Observable<Array<KEY>> {
+		return from(values.map(value => AbstractMappingRepository.ensureObservable(this.mapper.toDatabaseModel(value))))
+			.pipe(
+				flatMap(value => value),
+				toArray(),
+				flatMap(models => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+					transaction["source"] = this.repositoryInstantiationTimestamp;
+					return this.table.bulkPut(models);
+				}))),
+				map(key => [key])
+			);
+	}
 
-  public getPrimaryKeys(): Observable<Array<KEY>> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
-      transaction["source"] = this.repositoryInstantiationTimestamp;
-      return this.table.toCollection().primaryKeys();
-    })));
-  }
+	public findById(key: KEY): Observable<VALUE | null> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.get(key);
+		})).pipe(flatMap(model => model ? AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model)) : of(null))));
+	}
 
-  public delete(key: KEY): Observable<void> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
-      transaction["source"] = this.repositoryInstantiationTimestamp;
-      return this.table.delete(key);
-    })));
-  }
+	public findAll(): Observable<Array<VALUE>> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.toArray();
+		})).pipe(
+			map(models => models ? models.map(model => AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model))) : []),
+			concatAll(),
+			combineAll(),
+			defaultIfEmpty([])
+		));
+	}
 
-  public clear(): Observable<void> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
-      transaction["source"] = this.repositoryInstantiationTimestamp;
-      return this.table.clear();
-    })));
-  }
+	public getPrimaryKeys(): Observable<Array<KEY>> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.toCollection().primaryKeys();
+		})));
+	}
 
-  public count(): Observable<number> {
-    return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
-      transaction["source"] = this.repositoryInstantiationTimestamp;
-      return this.table.count();
-    })));
-  }
+	public delete(key: KEY): Observable<void> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.delete(key);
+		})));
+	}
 
-  public search(): DBQuery<VALUE, MODEL, KEY> {
-    return new DBQuery(this.table, this.databaseAccess, this.mapper, this.repositoryInstantiationTimestamp);
-  }
+	public clear(): Observable<void> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("rw", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.clear();
+		})));
+	}
 
-  public events(): Observable<RepositoryEvent<VALUE, KEY>> {
-    return this.eventsSubject.asObservable();
-  }
+	public count(): Observable<number> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.table.count();
+		})));
+	}
+
+	public search(): DBQuery<VALUE, MODEL, KEY> {
+		return new DBQuery(this.table, this.databaseAccess, this.mapper, this.repositoryInstantiationTimestamp);
+	}
+
+	public events(): Observable<RepositoryEvent<VALUE, KEY>> {
+		return this.eventsSubject.asObservable();
+	}
 }
 
 export class DBQuery<VALUE, MODEL, KEY extends IndexableType> {
 
-  private internalQuery: Collection<MODEL, KEY>;
+	private internalQuery: Collection<MODEL, KEY>;
 
-  constructor(private table: Table<MODEL, KEY>,
-              private databaseAccess: DatabaseAccess,
-              private mapper: RepositoryMapper<VALUE, MODEL>,
-              private repositoryInstantiationTimestamp: string) {
-  }
+	constructor(private table: Table<MODEL, KEY>,
+				private databaseAccess: DatabaseAccess,
+				private mapper: RepositoryMapper<VALUE, MODEL>,
+				private repositoryInstantiationTimestamp: string) {
+	}
 
-  public andEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
-    if (this.internalQuery) {
-      this.internalQuery = this.internalQuery.and(item => item[property] === value);
-    } else {
-      this.internalQuery = this.table.where(property).equals(value);
-    }
-    return this;
-  }
+	public andEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
+		if (this.internalQuery) {
+			this.internalQuery = this.internalQuery.and(item => item[property] === value);
+		} else {
+			this.internalQuery = this.table.where(property).equals(value);
+		}
+		return this;
+	}
 
-  public andNotEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
-    if (this.internalQuery) {
-      this.internalQuery = this.internalQuery.and(item => item[property] !== value);
-    } else {
-      this.internalQuery = this.table.where(property).notEqual(value);
-    }
-    return this;
-  }
+	public andNotEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
+		if (this.internalQuery) {
+			this.internalQuery = this.internalQuery.and(item => item[property] !== value);
+		} else {
+			this.internalQuery = this.table.where(property).notEqual(value);
+		}
+		return this;
+	}
 
-  public orEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
-    if (this.internalQuery) {
-      this.internalQuery = this.internalQuery.or(property).equals(value);
-    } else {
-      this.internalQuery = this.table.where(property).equals(value);
-    }
-    return this;
-  }
+	public orEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
+		if (this.internalQuery) {
+			this.internalQuery = this.internalQuery.or(property).equals(value);
+		} else {
+			this.internalQuery = this.table.where(property).equals(value);
+		}
+		return this;
+	}
 
-  public orNotEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
-    if (this.internalQuery) {
-      this.internalQuery = this.internalQuery.or(property).notEqual(value);
-    } else {
-      this.internalQuery = this.table.where(property).notEqual(value);
-    }
-    return this;
-  }
+	public orNotEqual(property: string, value: any): DBQuery<VALUE, MODEL, KEY> {
+		if (this.internalQuery) {
+			this.internalQuery = this.internalQuery.or(property).notEqual(value);
+		} else {
+			this.internalQuery = this.table.where(property).notEqual(value);
+		}
+		return this;
+	}
 
-  public and(predicate: (model: MODEL) => boolean): DBQuery<VALUE, MODEL, KEY> {
-    if (this.internalQuery) {
-      this.internalQuery = this.internalQuery.filter(model => predicate(model));
-    } else {
-      this.internalQuery = this.table.filter(model => predicate(model));
-    }
-    return this;
-  }
+	public and(predicate: (model: MODEL) => boolean): DBQuery<VALUE, MODEL, KEY> {
+		if (this.internalQuery) {
+			this.internalQuery = this.internalQuery.filter(model => predicate(model));
+		} else {
+			this.internalQuery = this.table.filter(model => predicate(model));
+		}
+		return this;
+	}
 
-  public find(): Observable<Array<VALUE>> {
-      return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
-          transaction["source"] = this.repositoryInstantiationTimestamp;
-          return this.internalQuery.toArray();
-      })).pipe(
-          map(models => models ? models.map(model => AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model))) : []),
-          concatAll(),
-          combineAll(),
-          defaultIfEmpty([])
-      ));
-  }
+	public find(): Observable<Array<VALUE>> {
+		return defer(() => fromPromise(this.databaseAccess.db.transaction("r", this.table, transaction => {
+			transaction["source"] = this.repositoryInstantiationTimestamp;
+			return this.internalQuery.toArray();
+		})).pipe(
+			map(models => models ? models.map(model => AbstractMappingRepository.ensureObservable(this.mapper.fromDatabaseModel(model))) : []),
+			concatAll(),
+			combineAll(),
+			defaultIfEmpty([])
+		));
+	}
 }
