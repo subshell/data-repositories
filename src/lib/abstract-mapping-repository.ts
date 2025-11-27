@@ -1,5 +1,4 @@
-import Dexie, {IndexableType, Table} from "dexie";
-import 'dexie-observable';
+import Dexie, {IndexableType, Table, Collection, Transaction} from "dexie";
 import {defer, from, Observable, of, Subject} from "rxjs";
 import {combineAll, concatAll, defaultIfEmpty, flatMap, map, toArray} from "rxjs/operators";
 import {Class} from "./class";
@@ -15,7 +14,6 @@ import {
 } from "./database-decorators";
 import {Repository} from "./repository";
 import {fromPromise} from "rxjs/internal/observable/innerFrom";
-import Collection = Dexie.Collection;
 
 export interface RepositoryMapper<VALUE, MODEL> {
   toDatabaseModel(value: VALUE): MODEL | Observable<MODEL>;
@@ -58,6 +56,7 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY extends Indexa
 
   private eventsSubject = new Subject<RepositoryEvent<VALUE, KEY>>();
   private repositoryInstantiationTimestamp = String(new Date().getTime()); // used as a unique id across tabs
+  private broadcast?: BroadcastChannel;
 
   constructor(private databaseAccess: DatabaseAccess,
               private modelType: Class<MODEL>,
@@ -176,19 +175,74 @@ export abstract class AbstractMappingRepository<VALUE, MODEL, KEY extends Indexa
   }
 
   private registerEventsListener() {
-    this.databaseAccess.db.on("changes",changes => {
-      changes.forEach(change => {
-        if (change.table !== this.repositoryName || change.source && change.source === this.repositoryInstantiationTimestamp) {
-          return;
-        }
-        let repositoryEvent: RepositoryEvent<VALUE, KEY> = {
-          type: this.getRepositoryEventTypeFromDexieType(change.type),
-          key: change.key,
-          newValue: (<any>change).obj,
-          previousValue: (<any>change).oldObj
+    // In-tab events via Dexie table hooks
+    const table = this.table as any;
+    const selfRef = this;
+    // Setup cross-tab broadcast channel if available (native BroadcastChannel)
+    try {
+      const BC = (globalThis as any).BroadcastChannel;
+      if (typeof BC === 'function') {
+        const channelName = `data-repositories:${this.databaseAccess.db.name}:${this.repositoryName}`;
+        const bc = new BC(channelName);
+        this.broadcast = bc;
+        bc.onmessage = (ev: MessageEvent) => {
+          const change = ev.data;
+          if (!change || change.source === this.repositoryInstantiationTimestamp) return;
+          if (change.table !== this.repositoryName) return;
+          const repositoryEvent: RepositoryEvent<VALUE, KEY> = {
+            type: change.type,
+            key: change.key,
+            newValue: change.newValue,
+            previousValue: change.previousValue
+          };
+          this.eventsSubject.next(repositoryEvent);
         };
-        this.eventsSubject.next(repositoryEvent);
-      });
+      }
+    } catch (_) {
+      // ignore if BroadcastChannel not available
+    }
+
+    // creating
+    table.hook('creating', function(this: any, primKey: KEY, obj: any, tx: Transaction) {
+      const source = selfRef.repositoryInstantiationTimestamp;
+      const isSelf = !!(tx && (tx as any).source === source);
+      const emit = (key: KEY) => {
+        const event: RepositoryEvent<VALUE, KEY> = { type: RepositoryEventType.CREATE, key, newValue: obj };
+        if (!isSelf) {
+          (selfRef as AbstractMappingRepository<VALUE, MODEL, KEY>).eventsSubject.next(event);
+        }
+        (selfRef as AbstractMappingRepository<VALUE, MODEL, KEY>).broadcast?.postMessage({ table: selfRef.repositoryName, type: RepositoryEventType.CREATE, key, newValue: obj, source });
+      };
+      // emit after success to ensure it was stored
+      this.onsuccess = (key: KEY) => emit(key);
+    });
+
+    // updating
+    table.hook('updating', function(this: any, modifications: any, primKey: KEY, obj: any, tx: Transaction) {
+      const source = selfRef.repositoryInstantiationTimestamp;
+      const isSelf = !!(tx && (tx as any).source === source);
+      const prev = { ...obj };
+      // onsuccess provides the resulting object as this.value (in Dexie docs)
+      this.onsuccess = (updatedObj: any) => {
+        const event: RepositoryEvent<VALUE, KEY> = { type: RepositoryEventType.UPDATE, key: primKey, newValue: updatedObj, previousValue: prev };
+        if (!isSelf) {
+          selfRef.eventsSubject.next(event);
+        }
+        selfRef.broadcast?.postMessage({ table: selfRef.repositoryName, type: RepositoryEventType.UPDATE, key: primKey, newValue: updatedObj, previousValue: prev, source });
+      };
+    });
+
+    // deleting
+    table.hook('deleting', function(this: any, primKey: KEY, obj: any, tx: Transaction) {
+      const source = selfRef.repositoryInstantiationTimestamp;
+      const isSelf = !!(tx && (tx as any).source === source);
+      this.onsuccess = () => {
+        const event: RepositoryEvent<VALUE, KEY> = { type: RepositoryEventType.DELETE, key: primKey, previousValue: obj };
+        if (!isSelf) {
+          selfRef.eventsSubject.next(event);
+        }
+        selfRef.broadcast?.postMessage({ table: selfRef.repositoryName, type: RepositoryEventType.DELETE, key: primKey, previousValue: obj, source });
+      };
     });
   }
 

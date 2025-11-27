@@ -19,7 +19,6 @@
   "license": "MIT",
   "dependencies": {
     "dexie": "4.2.1",
-    "dexie-observable": "4.0.1-beta.13",
     "reflect-metadata": "0.2.2",
     "rxjs": "^7.8.2"
   },
